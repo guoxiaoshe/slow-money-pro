@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>组合比例计算器</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1d3029;
+      --muted: #738078;
+      --paper: #f4f5ef;
+      --card: #fff;
+      --line: #e8ece5;
+      --green: #286b50;
+      --green-soft: #eaf4ee;
+      --red: #a64d43;
+      --red-soft: #fbefed;
+      --amber: #9a6a27;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); }
+    button, input { font: inherit; }
+    .page { width: min(100% - 36px, 960px); margin: 0 auto; padding: 44px 0 64px; }
+    .eyebrow { color: var(--green); font-size: 12px; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { margin: 8px 0 8px; font-size: clamp(28px, 5vw, 42px); letter-spacing: -.045em; }
+    .intro { max-width: 650px; margin: 0; color: var(--muted); line-height: 1.7; }
+    .summary { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 12px; margin: 28px 0 30px; }
+    .summary-card { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); }
+    .summary-card.total { color: #fff; border-color: var(--ink); background: var(--ink); }
+    .summary-label { display: block; color: var(--muted); font-size: 13px; }
+    .total .summary-label { color: #b8c9c0; }
+    .summary-value { display: block; margin-top: 9px; font-size: clamp(20px, 4vw, 27px); font-weight: 720; letter-spacing: -.035em; overflow-wrap: anywhere; }
+    .summary-hint { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
+    .total .summary-hint { color: #b8c9c0; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 0 2px 14px; }
+    .toolbar-actions { display: flex; align-items: center; gap: 8px; }
+    .toolbar h2 { margin: 0; font-size: 18px; }
+    .transfer-button { padding: 8px 12px; border: 1px solid #dce3dc; border-radius: 9px; color: var(--ink); background: #fff; cursor: pointer; }
+    .transfer-button:hover { border-color: #aebbb1; }
+    .reset { padding: 8px 12px; border: 1px solid #dce3dc; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; }
+    .reset:hover { color: var(--ink); border-color: #aebbb1; }
+    .edit-button { padding: 8px 14px; border: 1px solid var(--green); border-radius: 9px; color: #fff; background: var(--green); cursor: pointer; }
+    .edit-button:hover { background: #1f573f; }
+    .group { margin: 0 0 20px; }
+    .group-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0 2px 9px; }
+    .group-heading h3 { margin: 0; font-size: 14px; }
+    .group-heading span { color: var(--muted); font-size: 12px; }
+    .asset-list { overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: var(--card); }
+    .asset { display: grid; grid-template-columns: minmax(160px, 1.3fr) minmax(140px, .9fr) minmax(180px, 1fr); align-items: center; gap: 20px; padding: 17px 20px; }
+    .asset + .asset { border-top: 1px solid var(--line); }
+    .asset-name { font-size: 14px; font-weight: 680; }
+    .asset-meta { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; }
+    .amount-wrap { position: relative; }
+    .currency { position: absolute; top: 50%; left: 12px; color: var(--muted); font-size: 13px; transform: translateY(-50%); }
+    .amount { width: 100%; min-height: 42px; padding: 9px 11px 9px 28px; border: 1px solid #dfe5df; border-radius: 9px; outline: none; color: var(--ink); background: #fbfcfa; font-variant-numeric: tabular-nums; }
+    .amount[readonly] { border-color: transparent; color: var(--ink); background: #f5f7f3; cursor: default; }
+    .amount:focus { border-color: var(--green); box-shadow: 0 0 0 3px #286b5019; }
+    .allocation { min-width: 0; }
+    .allocation-line { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+    .allocation-line + .allocation-line { margin-top: 7px; }
+    .allocation-label { color: var(--muted); }
+    .allocation-value { font-weight: 650; font-variant-numeric: tabular-nums; text-align: right; }
+    .bar { height: 5px; margin-top: 10px; overflow: hidden; border-radius: 10px; background: #edf0eb; }
+    .bar-fill { height: 100%; border-radius: inherit; background: #92b9a1; transition: width .18s ease; }
+    .adjustment { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+    .adjustment .allocation-label { font-size: 12px; }
+    .adjustment-value { font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums; text-align: right; }
+    .buy { color: var(--green); }
+    .sell { color: var(--red); }
+    .balanced { color: var(--muted); }
+    .transfer-status { min-height: 20px; margin: 0 2px 12px; color: var(--muted); font-size: 12px; }
+    .transfer-status[data-state="error"] { color: var(--red); }
+    .note { margin: 18px 2px 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .note strong { color: var(--amber); font-weight: 650; }
+    @media (max-width: 700px) {
+      .page { width: min(100% - 28px, 560px); padding-top: 30px; }
+      .summary { grid-template-columns: 1fr 1fr; gap: 9px; margin: 22px 0 25px; }
+      .summary-card { padding: 16px; }
+      .summary-card.total { grid-column: 1 / -1; }
+      .toolbar { flex-wrap: wrap; }
+      .toolbar-actions { flex-wrap: wrap; justify-content: flex-end; }
+      .asset { grid-template-columns: 1fr 1fr; gap: 13px 14px; padding: 16px; }
+      .asset-identity { grid-column: 1 / -1; }
+      .allocation { grid-column: 1 / -1; }
+      .amount-wrap { grid-column: 1 / -1; }
+      .allocation-line { font-size: 12px; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <div class="eyebrow">Portfolio planner</div>
+      <h1>组合比例计算器</h1>
+      <p class="intro">录入各类资产当前总额，即可查看实际配置与目标的差距，以及按当前组合总额估算的买入或卖出金额。</p>
+    </header>
+
+    <section class="summary" aria-label="组合概览">
+      <div class="summary-card total">
+        <span class="summary-label">当前组合总额</span>
+        <strong class="summary-value" id="total-value">¥0.00</strong>
+        <span class="summary-hint">所有金额按人民币计</span>
+      </div>
+      <div class="summary-card">
+        <span class="summary-label">已录入资产</span>
+        <strong class="summary-value" id="asset-count">0 / 7</strong>
+        <span class="summary-hint">按资产类别分别录入</span>
+      </div>
+      <div class="summary-card">
+        <span class="summary-label">配置偏离</span>
+        <strong class="summary-value" id="deviation-value">—</strong>
+        <span class="summary-hint">各项偏差绝对值之和的一半</span>
+      </div>
+    </section>
+
+    <div class="toolbar">
+      <h2>资产明细</h2>
+      <div class="toolbar-actions">
+        <button class="transfer-button" id="import-button" type="button">导入 JSON</button>
+        <button class="transfer-button" id="export-button" type="button">导出 JSON</button>
+        <button class="reset" id="reset-button" type="button" hidden>清空金额</button>
+        <button class="edit-button" id="edit-button" type="button" aria-pressed="false">编辑金额</button>
+      </div>
+    </div>
+    <input id="import-file" type="file" accept=".json,application/json" hidden>
+    <p class="transfer-status" id="transfer-status" role="status" aria-live="polite"></p>
+    <div id="asset-groups"></div>
+    <p class="note"><strong>计算说明：</strong>目标金额 = 当前组合总额 × 目标比例；建议调整额 = 目标金额 − 当前金额。正数表示建议买入，负数表示建议卖出。建议仅按目标比例计算，不构成投资建议。</p>
+  </main>
+
+  <script>
+    const assets = [
+      { id: "sp500", name: "标普500 ETF", target: 40, group: "权益类资产", categoryTarget: 85 },
+      { id: "nasdaq100", name: "纳斯达克100 ETF", target: 15, group: "权益类资产", categoryTarget: 85 },
+      { id: "free-cash-flow", name: "中证自由现金流 ETF（南方基金）", target: 10, group: "权益类资产", categoryTarget: 85 },
+      { id: "dax", name: "德国 DAX ETF", target: 10, group: "权益类资产", categoryTarget: 85 },
+      { id: "hang-seng-dividend", name: "恒生红利 ETF", target: 10, group: "权益类资产", categoryTarget: 85 },
+      { id: "gold", name: "黄金 ETF", target: 10, group: "避险资产", categoryTarget: 10 },
+      { id: "cash", name: "货币基金 / 现金理财", target: 5, group: "流动性备付金", categoryTarget: 5 },
+    ];
+    const formatter = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const storageKey = "slow-money-allocation-amounts";
+    const amountInputs = new Map();
+    let isEditing = false;
+
+    function formatMoney(value) {
+      return `¥${formatter.format(value)}`;
+    }
+
+    function readSavedAmounts() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(storageKey) || "{}");
+        return saved && typeof saved === "object" ? saved : {};
+      } catch {
+        return {};
+      }
+    }
+
+    function setTransferStatus(message, state = "success") {
+      const status = document.getElementById("transfer-status");
+      status.textContent = message;
+      status.dataset.state = state;
+    }
+
+    function exportAmounts() {
+      const amounts = readSavedAmounts();
+      const file = new Blob([`${JSON.stringify(amounts, null, 2)}\n`], { type: "application/json" });
+      const url = URL.createObjectURL(file);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `slow-money-assets-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setTransferStatus("资产金额已导出为 JSON 文件。");
+    }
+
+    async function importAmounts(file) {
+      try {
+        const imported = JSON.parse(await file.text());
+        if (!imported || typeof imported !== "object" || Array.isArray(imported)) {
+          throw new Error("JSON 顶层必须是资产金额对象。");
+        }
+
+        const knownIds = new Set(assets.map((asset) => asset.id));
+        const importedIds = Object.keys(imported).filter((id) => knownIds.has(id));
+        if (importedIds.length === 0) {
+          throw new Error("文件中没有可识别的资产金额。");
+        }
+
+        const validated = {};
+        for (const asset of assets) {
+          const value = imported[asset.id];
+          if (value === undefined || (typeof value === "string" && value.trim() === "")) {
+            validated[asset.id] = "";
+            continue;
+          }
+          if (typeof value !== "number" && typeof value !== "string") {
+            throw new Error(`${asset.name}金额必须是非负数字。`);
+          }
+          const amount = Number(value);
+          if (!Number.isFinite(amount) || amount < 0) {
+            throw new Error(`${asset.name}金额必须是非负数字。`);
+          }
+          validated[asset.id] = String(amount);
+        }
+
+        for (const [id, input] of amountInputs) input.value = validated[id];
+        update();
+        setTransferStatus("资产金额已导入并更新计算结果。");
+      } catch (error) {
+        setTransferStatus(`导入失败：${error.message}`, "error");
+      }
+    }
+
+    function renderAssets() {
+      const container = document.getElementById("asset-groups");
+      const groups = [...new Set(assets.map((asset) => asset.group))];
+      const saved = readSavedAmounts();
+
+      for (const groupName of groups) {
+        const groupAssets = assets.filter((asset) => asset.group === groupName);
+        const group = document.createElement("section");
+        group.className = "group";
+
+        const heading = document.createElement("div");
+        heading.className = "group-heading";
+        heading.innerHTML = `<h3>${groupName}</h3><span>目标合计 ${groupAssets[0].categoryTarget}%</span>`;
+        group.appendChild(heading);
+
+        const list = document.createElement("div");
+        list.className = "asset-list";
+        for (const asset of groupAssets) {
+          const row = document.createElement("article");
+          row.className = "asset";
+          row.innerHTML = `
+            <div class="asset-identity">
+              <div class="asset-name">${asset.name}</div>
+              <span class="asset-meta">目标比例 ${asset.target}%</span>
+            </div>
+            <label class="amount-wrap">
+              <span class="currency" aria-hidden="true">¥</span>
+              <span class="asset-meta" style="position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0)">${asset.name}当前金额</span>
+              <input class="amount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="输入当前金额" data-asset="${asset.id}" aria-label="${asset.name}当前金额">
+            </label>
+            <div class="allocation" aria-live="polite">
+              <div class="allocation-line"><span class="allocation-label">实际比例</span><span class="allocation-value" data-actual="${asset.id}">—</span></div>
+              <div class="allocation-line"><span class="allocation-label">比例差（目标 − 实际）</span><span class="allocation-value" data-difference="${asset.id}">—</span></div>
+              <div class="bar" aria-hidden="true"><div class="bar-fill" data-bar="${asset.id}" style="width:0%"></div></div>
+              <div class="adjustment"><span class="allocation-label">建议调整额</span><span class="adjustment-value balanced" data-adjustment="${asset.id}">—</span></div>
+            </div>`;
+          const input = row.querySelector("input");
+          input.readOnly = true;
+          if (saved[asset.id] !== undefined && Number.isFinite(Number(saved[asset.id])) && Number(saved[asset.id]) >= 0) {
+            input.value = saved[asset.id];
+          }
+          amountInputs.set(asset.id, input);
+          input.addEventListener("input", update);
+          list.appendChild(row);
+        }
+        group.appendChild(list);
+        container.appendChild(group);
+      }
+    }
+
+    function update() {
+      const amounts = Object.fromEntries(assets.map((asset) => {
+        const raw = Number(amountInputs.get(asset.id).value);
+        return [asset.id, Number.isFinite(raw) && raw > 0 ? raw : 0];
+      }));
+      const total = Object.values(amounts).reduce((sum, amount) => sum + amount, 0);
+      const entered = [...amountInputs.values()].filter((input) => input.value.trim() !== "").length;
+      let absoluteDifference = 0;
+
+      for (const asset of assets) {
+        const current = amounts[asset.id];
+        const actualRatio = total > 0 ? current / total * 100 : null;
+        const ratioDifference = actualRatio === null ? null : asset.target - actualRatio;
+        const adjustment = total > 0 ? total * asset.target / 100 - current : null;
+        if (ratioDifference !== null) absoluteDifference += Math.abs(ratioDifference);
+
+        document.querySelector(`[data-actual="${asset.id}"]`).textContent = actualRatio === null ? "—" : `${actualRatio.toFixed(2)}%`;
+        document.querySelector(`[data-difference="${asset.id}"]`).textContent = ratioDifference === null ? "—" : `${ratioDifference > 0 ? "+" : ""}${ratioDifference.toFixed(2)} 个百分点`;
+        document.querySelector(`[data-bar="${asset.id}"]`).style.width = `${Math.min(actualRatio || 0, 100)}%`;
+
+        const adjustmentElement = document.querySelector(`[data-adjustment="${asset.id}"]`);
+        if (adjustment === null) {
+          adjustmentElement.textContent = "—";
+          adjustmentElement.className = "adjustment-value balanced";
+        } else if (Math.abs(adjustment) < 0.005) {
+          adjustmentElement.textContent = "无需调整";
+          adjustmentElement.className = "adjustment-value balanced";
+        } else {
+          adjustmentElement.textContent = `${adjustment > 0 ? "买入 " : "卖出 "}${formatMoney(Math.abs(adjustment))}`;
+          adjustmentElement.className = `adjustment-value ${adjustment > 0 ? "buy" : "sell"}`;
+        }
+      }
+
+      document.getElementById("total-value").textContent = formatMoney(total);
+      document.getElementById("asset-count").textContent = `${entered} / ${assets.length}`;
+      document.getElementById("deviation-value").textContent = total > 0 ? `${(absoluteDifference / 2).toFixed(2)}%` : "—";
+      try {
+        const savedAmounts = Object.fromEntries([...amountInputs].map(([id, input]) => [id, input.value]));
+        localStorage.setItem(storageKey, JSON.stringify(savedAmounts));
+      } catch {
+        // Storage may be unavailable; calculations remain functional for this page view.
+      }
+    }
+
+    renderAssets();
+    document.getElementById("export-button").addEventListener("click", exportAmounts);
+    const importFile = document.getElementById("import-file");
+    document.getElementById("import-button").addEventListener("click", () => importFile.click());
+    importFile.addEventListener("change", async () => {
+      const [file] = importFile.files;
+      if (file) await importAmounts(file);
+      importFile.value = "";
+    });
+    document.getElementById("edit-button").addEventListener("click", (event) => {
+      isEditing = !isEditing;
+      for (const input of amountInputs.values()) input.readOnly = !isEditing;
+      document.getElementById("reset-button").hidden = !isEditing;
+      event.currentTarget.textContent = isEditing ? "完成" : "编辑金额";
+      event.currentTarget.setAttribute("aria-pressed", String(isEditing));
+      if (isEditing) amountInputs.values().next().value?.focus();
+    });
+    document.getElementById("reset-button").addEventListener("click", () => {
+      for (const input of amountInputs.values()) input.value = "";
+      update();
+    });
+    update();
+  </script>
+</body>
+</html>
