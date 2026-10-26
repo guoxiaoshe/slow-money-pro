@@ -37,6 +37,12 @@
     .summary-value { display: block; margin-top: 9px; font-size: clamp(20px, 4vw, 27px); font-weight: 720; letter-spacing: -.035em; overflow-wrap: anywhere; }
     .summary-hint { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
     .total .summary-hint { color: #b8c9c0; }
+    .calculation-settings { display: flex; flex-wrap: wrap; align-items: end; gap: 14px; margin: 0 2px 24px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+    .setting { display: grid; gap: 6px; }
+    .setting label { color: var(--muted); font-size: 12px; }
+    .setting select { min-height: 38px; padding: 7px 32px 7px 10px; border: 1px solid #dfe5df; border-radius: 8px; color: var(--ink); background: #fbfcfa; }
+    #baseline-setting[hidden] { display: none; }
+    .setting-hint { align-self: center; color: var(--muted); font-size: 12px; }
     .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 0 2px 14px; }
     .toolbar-actions { display: flex; align-items: center; gap: 8px; }
     .toolbar h2 { margin: 0; font-size: 18px; }
@@ -82,6 +88,9 @@
       .summary { grid-template-columns: 1fr 1fr; gap: 9px; margin: 22px 0 25px; }
       .summary-card { padding: 16px; }
       .summary-card.total { grid-column: 1 / -1; }
+      .calculation-settings { align-items: stretch; flex-direction: column; gap: 12px; margin-bottom: 22px; }
+      .setting select { width: 100%; }
+      .setting-hint { align-self: auto; line-height: 1.6; }
       .toolbar { flex-wrap: wrap; }
       .toolbar-actions { flex-wrap: wrap; justify-content: flex-end; }
       .asset { grid-template-columns: 1fr 1fr; gap: 13px 14px; padding: 16px; }
@@ -98,7 +107,7 @@
     <header>
       <div class="eyebrow">Portfolio planner</div>
       <h1>组合比例计算器</h1>
-      <p class="intro">录入各类资产当前总额，即可查看实际配置与目标的差距，以及按当前组合总额估算的买入或卖出金额。</p>
+      <p class="intro">录入各类资产当前总额，即可查看实际配置与目标的差距，以及建议买入或卖出的金额。可按当前总额计算，也可指定一项资产作为基线推算组合总额。</p>
     </header>
 
     <section class="summary" aria-label="组合概览">
@@ -119,6 +128,21 @@
       </div>
     </section>
 
+    <section class="calculation-settings" aria-label="计算设置">
+      <div class="setting">
+        <label for="calculation-mode">计算方式</label>
+        <select id="calculation-mode">
+          <option value="total">总额计算</option>
+          <option value="baseline">基线算法</option>
+        </select>
+      </div>
+      <div class="setting" id="baseline-setting" hidden>
+        <label for="baseline-asset">基线资产（视为已满足目标比例）</label>
+        <select id="baseline-asset"></select>
+      </div>
+      <span class="setting-hint" id="calculation-hint">按所有资产金额之和计算组合总额。</span>
+    </section>
+
     <div class="toolbar">
       <h2>资产明细</h2>
       <div class="toolbar-actions">
@@ -131,7 +155,7 @@
     <input id="import-file" type="file" accept=".json,application/json" hidden>
     <p class="transfer-status" id="transfer-status" role="status" aria-live="polite"></p>
     <div id="asset-groups"></div>
-    <p class="note"><strong>计算说明：</strong>目标金额 = 当前组合总额 × 目标比例；建议调整额 = 目标金额 − 当前金额。正数表示建议买入，负数表示建议卖出。建议仅按目标比例计算，不构成投资建议。</p>
+    <p class="note"><strong>计算说明：</strong><span id="calculation-note">目标金额 = 当前组合总额 × 目标比例；建议调整额 = 目标金额 − 当前金额。</span>正数表示建议买入，负数表示建议卖出。建议仅按目标比例计算，不构成投资建议。</p>
   </main>
 
   <script>
@@ -146,8 +170,27 @@
     ];
     const formatter = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const storageKey = "slow-money-allocation-amounts";
+    const calculationStorageKey = "slow-money-allocation-calculation";
     const amountInputs = new Map();
+    const savedCalculation = readSavedCalculation();
+    let calculationMode = savedCalculation.mode;
+    let baselineAssetId = savedCalculation.baselineAssetId;
     let isEditing = false;
+
+    function readSavedCalculation() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(calculationStorageKey) || "{}");
+        const settings = saved && typeof saved === "object" ? saved : {};
+        return {
+          mode: settings.mode === "baseline" ? "baseline" : "total",
+          baselineAssetId: assets.some((asset) => asset.id === settings.baselineAssetId)
+            ? settings.baselineAssetId
+            : assets[0].id,
+        };
+      } catch {
+        return { mode: "total", baselineAssetId: assets[0].id };
+      }
+    }
 
     function formatMoney(value) {
       return `¥${formatter.format(value)}`;
@@ -224,6 +267,16 @@
       const container = document.getElementById("asset-groups");
       const groups = [...new Set(assets.map((asset) => asset.group))];
       const saved = readSavedAmounts();
+      const baselineSelect = document.getElementById("baseline-asset");
+      for (const asset of assets) {
+        const option = document.createElement("option");
+        option.value = asset.id;
+        option.textContent = `${asset.name}（目标 ${asset.target}%）`;
+        baselineSelect.appendChild(option);
+      }
+      baselineSelect.value = baselineAssetId;
+      document.getElementById("calculation-mode").value = calculationMode;
+      updateCalculationSettings();
 
       for (const groupName of groups) {
         const groupAssets = assets.filter((asset) => asset.group === groupName);
@@ -270,12 +323,29 @@
       }
     }
 
+    function updateCalculationSettings() {
+      const isBaselineMode = calculationMode === "baseline";
+      document.getElementById("baseline-setting").hidden = !isBaselineMode;
+      document.getElementById("total-value").previousElementSibling.textContent = isBaselineMode ? "推算组合总额" : "当前组合总额";
+      document.getElementById("calculation-hint").textContent = isBaselineMode
+        ? "所选基线资产视为已满足目标比例，按其金额推算组合总额。"
+        : "按所有资产金额之和计算组合总额。";
+      document.getElementById("calculation-note").textContent = isBaselineMode
+        ? "推算组合总额 = 基线资产金额 ÷ 基线资产目标比例；目标金额 = 推算组合总额 × 目标比例；建议调整额 = 目标金额 − 当前金额。"
+        : "目标金额 = 当前组合总额 × 目标比例；建议调整额 = 目标金额 − 当前金额。";
+    }
+
     function update() {
       const amounts = Object.fromEntries(assets.map((asset) => {
         const raw = Number(amountInputs.get(asset.id).value);
         return [asset.id, Number.isFinite(raw) && raw > 0 ? raw : 0];
       }));
-      const total = Object.values(amounts).reduce((sum, amount) => sum + amount, 0);
+      const enteredTotal = Object.values(amounts).reduce((sum, amount) => sum + amount, 0);
+      const baseline = assets.find((asset) => asset.id === baselineAssetId);
+      const baselineAmount = baseline ? amounts[baseline.id] : 0;
+      const total = calculationMode === "baseline"
+        ? (baselineAmount > 0 ? baselineAmount / (baseline.target / 100) : 0)
+        : enteredTotal;
       const entered = [...amountInputs.values()].filter((input) => input.value.trim() !== "").length;
       let absoluteDifference = 0;
 
@@ -309,12 +379,22 @@
       try {
         const savedAmounts = Object.fromEntries([...amountInputs].map(([id, input]) => [id, input.value]));
         localStorage.setItem(storageKey, JSON.stringify(savedAmounts));
+        localStorage.setItem(calculationStorageKey, JSON.stringify({ mode: calculationMode, baselineAssetId }));
       } catch {
         // Storage may be unavailable; calculations remain functional for this page view.
       }
     }
 
     renderAssets();
+    document.getElementById("calculation-mode").addEventListener("change", (event) => {
+      calculationMode = event.currentTarget.value;
+      updateCalculationSettings();
+      update();
+    });
+    document.getElementById("baseline-asset").addEventListener("change", (event) => {
+      baselineAssetId = event.currentTarget.value;
+      update();
+    });
     document.getElementById("export-button").addEventListener("click", exportAmounts);
     const importFile = document.getElementById("import-file");
     document.getElementById("import-button").addEventListener("click", () => importFile.click());
