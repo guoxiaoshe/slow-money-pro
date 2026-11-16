@@ -41,7 +41,10 @@
     .setting { display: grid; gap: 6px; }
     .setting label { color: var(--muted); font-size: 12px; }
     .setting select { min-height: 38px; padding: 7px 32px 7px 10px; border: 1px solid #dfe5df; border-radius: 8px; color: var(--ink); background: #fbfcfa; }
-    #baseline-setting[hidden] { display: none; }
+    #baseline-setting[hidden], #exclude-assets-setting[hidden] { display: none; }
+    .exclude-list { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-top: 4px; }
+    .exclude-item { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; background: #f3f6f3; color: var(--ink); font-size: 12px; }
+    .exclude-item input { accent-color: var(--green); }
     .setting-hint { align-self: center; color: var(--muted); font-size: 12px; }
     .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 0 2px 14px; }
     .toolbar-actions { display: flex; align-items: center; gap: 8px; }
@@ -158,6 +161,10 @@
         <label for="baseline-asset">基线资产（视为已满足目标比例）</label>
         <select id="baseline-asset"></select>
       </div>
+      <div class="setting" id="exclude-assets-setting">
+        <label>排除资产（再平衡时忽略）</label>
+        <div class="exclude-list" id="exclude-assets-list"></div>
+      </div>
       <span class="setting-hint" id="calculation-hint">按所有资产金额之和计算组合总额。</span>
     </section>
 
@@ -189,11 +196,14 @@
     const formatter = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const storageKey = "slow-money-allocation-amounts";
     const calculationStorageKey = "slow-money-allocation-calculation";
+    const excludedStorageKey = "slow-money-allocation-excluded";
     const amountInputs = new Map();
     const detailVisibility = new Map();
     const savedCalculation = readSavedCalculation();
+    const savedExcludedAssets = readSavedExcludedAssets();
     let calculationMode = savedCalculation.mode;
     let baselineAssetId = savedCalculation.baselineAssetId;
+    let excludedAssets = savedExcludedAssets;
     let isEditing = false;
 
     function readSavedCalculation() {
@@ -208,6 +218,17 @@
         };
       } catch {
         return { mode: "total", baselineAssetId: assets[0].id };
+      }
+    }
+
+    function readSavedExcludedAssets() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(excludedStorageKey) || "[]");
+        if (!Array.isArray(saved)) return [];
+        const knownIds = new Set(assets.map((asset) => asset.id));
+        return saved.filter((id) => typeof id === "string" && knownIds.has(id));
+      } catch {
+        return [];
       }
     }
 
@@ -287,6 +308,7 @@
       const groups = [...new Set(assets.map((asset) => asset.group))];
       const saved = readSavedAmounts();
       const baselineSelect = document.getElementById("baseline-asset");
+      baselineSelect.innerHTML = "";
       for (const asset of assets) {
         const option = document.createElement("option");
         option.value = asset.id;
@@ -295,6 +317,7 @@
       }
       baselineSelect.value = baselineAssetId;
       document.getElementById("calculation-mode").value = calculationMode;
+      renderExcludeAssets();
       updateCalculationSettings();
 
       for (const groupName of groups) {
@@ -349,16 +372,49 @@
       }
     }
 
+    function renderExcludeAssets() {
+      const list = document.getElementById("exclude-assets-list");
+      list.innerHTML = "";
+      for (const asset of assets) {
+        const label = document.createElement("label");
+        label.className = "exclude-item";
+        label.innerHTML = `
+          <input type="checkbox" value="${asset.id}" ${excludedAssets.includes(asset.id) ? "checked" : ""}>
+          <span>${asset.name}</span>
+        `;
+        label.querySelector("input").addEventListener("change", (event) => {
+          const { value, checked } = event.currentTarget;
+          if (checked && !excludedAssets.includes(value)) {
+            excludedAssets = [...excludedAssets, value];
+          } else if (!checked) {
+            excludedAssets = excludedAssets.filter((id) => id !== value);
+          }
+          try {
+            localStorage.setItem(excludedStorageKey, JSON.stringify(excludedAssets));
+          } catch {
+            // Storage may be unavailable; calculations remain functional for this page view.
+          }
+          update();
+        });
+        list.appendChild(label);
+      }
+    }
+
     function updateCalculationSettings() {
       const isBaselineMode = calculationMode === "baseline";
       document.getElementById("baseline-setting").hidden = !isBaselineMode;
+      document.getElementById("exclude-assets-setting").hidden = isBaselineMode;
       document.getElementById("total-value").previousElementSibling.textContent = isBaselineMode ? "推算组合总额" : "当前组合总额";
       document.getElementById("calculation-hint").textContent = isBaselineMode
         ? "所选基线资产视为已满足目标比例，按其金额推算组合总额。"
-        : "按所有资产金额之和计算组合总额。";
+        : excludedAssets.length > 0
+          ? "已排除资产不参与调整，仅对其余资产再平衡；组合总额保持不变。"
+          : "按所有资产金额之和计算组合总额。";
       document.getElementById("calculation-note").textContent = isBaselineMode
         ? "推算组合总额 = 基线资产金额 ÷ 基线资产目标比例；目标金额 = 推算组合总额 × 目标比例；建议调整额 = 目标金额 − 当前金额。"
-        : "目标金额 = 当前组合总额 × 目标比例；建议调整额 = 目标金额 − 当前金额。";
+        : excludedAssets.length > 0
+          ? "目标金额 = （当前组合总额 − 已排除资产金额）× 目标比例 ÷ 其余资产目标比例合计；建议调整额 = 目标金额 − 当前金额。"
+          : "目标金额 = 当前组合总额 × 目标比例；建议调整额 = 目标金额 − 当前金额。";
     }
 
     function update() {
@@ -373,13 +429,40 @@
         ? (baselineAmount > 0 ? baselineAmount / (baseline.target / 100) : 0)
         : enteredTotal;
       const entered = [...amountInputs.values()].filter((input) => input.value.trim() !== "").length;
+      const excludedSet = new Set(excludedAssets);
       let absoluteDifference = 0;
+      const includedAssets = assets.filter((asset) => !excludedSet.has(asset.id));
+      const includedTargetTotal = includedAssets.reduce((sum, asset) => sum + asset.target, 0);
+      const excludedCurrentTotal = assets.reduce((sum, asset) => sum + (excludedSet.has(asset.id) ? amounts[asset.id] : 0), 0);
+      const rebalanceTotal = Math.max(total - excludedCurrentTotal, 0);
 
       for (const asset of assets) {
         const current = amounts[asset.id];
-        const actualRatio = total > 0 ? current / total * 100 : null;
-        const ratioDifference = actualRatio === null ? null : asset.target - actualRatio;
-        const adjustment = total > 0 ? total * asset.target / 100 - current : null;
+        const isExcluded = excludedSet.has(asset.id);
+        let actualRatio = total > 0 ? current / total * 100 : null;
+        let ratioDifference = null;
+        let adjustment = null;
+        let targetRatio = null;
+
+        if (isExcluded) {
+          actualRatio = total > 0 ? current / total * 100 : null;
+          ratioDifference = null;
+          adjustment = null;
+        } else if (calculationMode === "baseline") {
+          actualRatio = total > 0 ? current / total * 100 : null;
+          ratioDifference = actualRatio === null ? null : asset.target - actualRatio;
+          adjustment = total > 0 ? total * asset.target / 100 - current : null;
+        } else if (includedTargetTotal > 0 && rebalanceTotal > 0) {
+          targetRatio = (rebalanceTotal * asset.target / includedTargetTotal) / total * 100;
+          actualRatio = total > 0 ? current / total * 100 : null;
+          ratioDifference = actualRatio === null || targetRatio === null ? null : targetRatio - actualRatio;
+          adjustment = total > 0 ? (rebalanceTotal * asset.target / includedTargetTotal) - current : null;
+        } else {
+          actualRatio = total > 0 ? current / total * 100 : null;
+          ratioDifference = actualRatio === null ? null : asset.target - actualRatio;
+          adjustment = total > 0 ? total * asset.target / 100 - current : null;
+        }
+
         if (ratioDifference !== null) absoluteDifference += Math.abs(ratioDifference);
 
         const differenceElement = document.querySelector(`[data-difference="${asset.id}"]`);
@@ -393,6 +476,17 @@
         differenceElement.textContent = ratioDifference === null ? "—" : `${ratioDifference > 0 ? "+" : ""}${ratioDifference.toFixed(2)} 个百分点`;
         document.querySelector(`[data-actual="${asset.id}"]`).textContent = actualRatio === null ? "—" : `${actualRatio.toFixed(2)}%`;
         document.querySelector(`[data-bar="${asset.id}"]`).style.width = `${Math.min(actualRatio || 0, 100)}%`;
+
+        if (isExcluded) {
+          adjustmentElement.textContent = "已排除";
+          adjustmentElement.className = "adjustment-value balanced";
+          detailsElement.hidden = true;
+          statusElement.className = "allocation-status status-ok";
+          statusMarkElement.textContent = "✓";
+          statusTextElement.textContent = "已排除，不参与再平衡";
+          toggleButton.hidden = true;
+          continue;
+        }
 
         if (adjustment === null) {
           adjustmentElement.textContent = "—";
@@ -452,6 +546,7 @@
         const savedAmounts = Object.fromEntries([...amountInputs].map(([id, input]) => [id, input.value]));
         localStorage.setItem(storageKey, JSON.stringify(savedAmounts));
         localStorage.setItem(calculationStorageKey, JSON.stringify({ mode: calculationMode, baselineAssetId }));
+        localStorage.setItem(excludedStorageKey, JSON.stringify(excludedAssets));
       } catch {
         // Storage may be unavailable; calculations remain functional for this page view.
       }
