@@ -76,6 +76,24 @@
     .adjustment { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
     .adjustment .allocation-label { font-size: 12px; }
     .adjustment-value { font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums; text-align: right; }
+    .allocation-details[hidden], .allocation-status[hidden] { display: none; }
+    .allocation-status {
+      display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #f8faf7; font-size: 12px;
+    }
+    .allocation-status.status-ok { background: #edf8f1; border-color: #cae5d2; }
+    .allocation-status.status-warn { background: #fff8ea; border-color: #f2d899; }
+    .allocation-status.status-error { background: #fdf0ee; border-color: #f0c2bb; }
+    .status-mark {
+      display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; font-weight: 800; font-size: 11px; flex-shrink: 0;
+    }
+    .status-ok .status-mark { color: var(--green); background: #dff3e6; }
+    .status-warn .status-mark { color: var(--amber); background: #f8e7bb; }
+    .status-error .status-mark { color: var(--red); background: #f4d2cd; }
+    .status-text { flex: 1; min-width: 0; color: var(--muted); }
+    .status-button {
+      border: none; background: transparent; color: var(--green); font-weight: 700; cursor: pointer; padding: 0; white-space: nowrap;
+    }
+    .status-button:hover { text-decoration: underline; }
     .buy { color: var(--green); }
     .sell { color: var(--red); }
     .balanced { color: var(--muted); }
@@ -172,6 +190,7 @@
     const storageKey = "slow-money-allocation-amounts";
     const calculationStorageKey = "slow-money-allocation-calculation";
     const amountInputs = new Map();
+    const detailVisibility = new Map();
     const savedCalculation = readSavedCalculation();
     let calculationMode = savedCalculation.mode;
     let baselineAssetId = savedCalculation.baselineAssetId;
@@ -305,9 +324,16 @@
             </label>
             <div class="allocation" aria-live="polite">
               <div class="allocation-line"><span class="allocation-label">实际比例</span><span class="allocation-value" data-actual="${asset.id}">—</span></div>
-              <div class="allocation-line"><span class="allocation-label">比例差（目标 − 实际）</span><span class="allocation-value" data-difference="${asset.id}">—</span></div>
-              <div class="bar" aria-hidden="true"><div class="bar-fill" data-bar="${asset.id}" style="width:0%"></div></div>
-              <div class="adjustment"><span class="allocation-label">建议调整额</span><span class="adjustment-value balanced" data-adjustment="${asset.id}">—</span></div>
+              <div class="allocation-details" data-details="${asset.id}">
+                <div class="allocation-line"><span class="allocation-label">比例差（目标 − 实际）</span><span class="allocation-value" data-difference="${asset.id}">—</span></div>
+                <div class="bar" aria-hidden="true"><div class="bar-fill" data-bar="${asset.id}" style="width:0%"></div></div>
+                <div class="adjustment"><span class="allocation-label">建议调整额</span><span class="adjustment-value balanced" data-adjustment="${asset.id}">—</span></div>
+              </div>
+              <div class="allocation-status status-ok" data-status="${asset.id}">
+                <span class="status-mark" data-status-mark="${asset.id}">✓</span>
+                <span class="status-text" data-status-text="${asset.id}">偏离较小，建议保持当前配置</span>
+                <button type="button" class="status-button" data-toggle="${asset.id}" aria-expanded="false">查看比例差额</button>
+              </div>
             </div>`;
           const input = row.querySelector("input");
           input.readOnly = true;
@@ -356,11 +382,18 @@
         const adjustment = total > 0 ? total * asset.target / 100 - current : null;
         if (ratioDifference !== null) absoluteDifference += Math.abs(ratioDifference);
 
+        const differenceElement = document.querySelector(`[data-difference="${asset.id}"]`);
+        const adjustmentElement = document.querySelector(`[data-adjustment="${asset.id}"]`);
+        const detailsElement = document.querySelector(`[data-details="${asset.id}"]`);
+        const statusElement = document.querySelector(`[data-status="${asset.id}"]`);
+        const statusTextElement = document.querySelector(`[data-status-text="${asset.id}"]`);
+        const statusMarkElement = document.querySelector(`[data-status-mark="${asset.id}"]`);
+        const toggleButton = document.querySelector(`[data-toggle="${asset.id}"]`);
+
+        differenceElement.textContent = ratioDifference === null ? "—" : `${ratioDifference > 0 ? "+" : ""}${ratioDifference.toFixed(2)} 个百分点`;
         document.querySelector(`[data-actual="${asset.id}"]`).textContent = actualRatio === null ? "—" : `${actualRatio.toFixed(2)}%`;
-        document.querySelector(`[data-difference="${asset.id}"]`).textContent = ratioDifference === null ? "—" : `${ratioDifference > 0 ? "+" : ""}${ratioDifference.toFixed(2)} 个百分点`;
         document.querySelector(`[data-bar="${asset.id}"]`).style.width = `${Math.min(actualRatio || 0, 100)}%`;
 
-        const adjustmentElement = document.querySelector(`[data-adjustment="${asset.id}"]`);
         if (adjustment === null) {
           adjustmentElement.textContent = "—";
           adjustmentElement.className = "adjustment-value balanced";
@@ -370,6 +403,45 @@
         } else {
           adjustmentElement.textContent = `${adjustment > 0 ? "买入 " : "卖出 "}${formatMoney(Math.abs(adjustment))}`;
           adjustmentElement.className = `adjustment-value ${adjustment > 0 ? "buy" : "sell"}`;
+        }
+
+        const deviationAbs = ratioDifference === null ? null : Math.abs(ratioDifference);
+        const isLowDeviation = deviationAbs !== null && deviationAbs < 2;
+        const isMediumDeviation = deviationAbs !== null && deviationAbs >= 2 && deviationAbs <= 5;
+        const isHighDeviation = deviationAbs !== null && deviationAbs > 5;
+
+        let detailVisible = detailVisibility.get(asset.id) ?? false;
+        if (!isLowDeviation) {
+          detailVisible = true;
+        }
+        detailVisibility.set(asset.id, detailVisible);
+
+        if (isLowDeviation) {
+          detailsElement.hidden = !detailVisible;
+          statusElement.className = "allocation-status status-ok";
+          statusMarkElement.textContent = "✓";
+          statusTextElement.textContent = "偏离较小，建议保持当前配置";
+          toggleButton.hidden = false;
+          toggleButton.textContent = detailVisible ? "收起比例差额" : "查看比例差额";
+          toggleButton.setAttribute("aria-expanded", String(detailVisible));
+        } else if (isMediumDeviation) {
+          detailsElement.hidden = false;
+          statusElement.className = "allocation-status status-warn";
+          statusMarkElement.textContent = "!";
+          statusTextElement.textContent = "偏离中等，建议适度调整";
+          toggleButton.hidden = true;
+        } else if (isHighDeviation) {
+          detailsElement.hidden = false;
+          statusElement.className = "allocation-status status-error";
+          statusMarkElement.textContent = "!";
+          statusTextElement.textContent = "偏离过大，建议尽快调整";
+          toggleButton.hidden = true;
+        } else {
+          detailsElement.hidden = true;
+          statusElement.className = "allocation-status status-ok";
+          statusMarkElement.textContent = "✓";
+          statusTextElement.textContent = "暂无配置偏离";
+          toggleButton.hidden = true;
         }
       }
 
@@ -386,6 +458,14 @@
     }
 
     renderAssets();
+    document.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-toggle]");
+      if (!toggle) return;
+      const assetId = toggle.dataset.toggle;
+      const current = detailVisibility.get(assetId) ?? false;
+      detailVisibility.set(assetId, !current);
+      update();
+    });
     document.getElementById("calculation-mode").addEventListener("change", (event) => {
       calculationMode = event.currentTarget.value;
       updateCalculationSettings();
